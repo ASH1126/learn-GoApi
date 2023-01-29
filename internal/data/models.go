@@ -2,8 +2,13 @@ package data
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base32"
 	"errors"
+	"net/http"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -253,7 +258,9 @@ func (t *Token) GetByToken(planText string) (*Token, error) {
 	return &token, nil
 }
 
-func (u *User) GetUserForToken(token Token) (*User, error) {
+// GetUserForToken takes a token parameter, and uses the UserID field from that parameter
+// to look a user up by id. It returns a pointer to the user model.
+func (t *Token) GetUserForToken(token Token) (*User, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
 
@@ -271,9 +278,74 @@ func (u *User) GetUserForToken(token Token) (*User, error) {
 		&user.CreatedAt,
 		&user.UpdateAt,
 	)
+
 	if err != nil {
 		return nil, err
 	}
 
 	return &user, nil
+}
+
+// GenerateToken generates a secure token of exactly 26 characters in length and returns it
+func (t *Token) GenerateToken(userID int, ttl time.Duration) (*Token, error) {
+	token := &Token{
+		UserID: userID,
+		Expiry: time.Now().Add(ttl),
+	}
+
+	randomBytes := make([]byte, 16)
+	_, err := rand.Read(randomBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	token.Token = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(randomBytes)
+	hash := sha256.Sum256([]byte(token.Token))
+	token.TokenHash = hash[:]
+
+	return token, nil
+}
+
+// AuthenticateToken takes the full http request, extracts the authorization header,
+// takes the plain text token from that header and looks up the associated token entry
+// in the database, and then finds the user associated with that token. If the token
+// is valid and a user is found, the user is returned; otherwise, it returns an error.
+func (t *Token) AuthenticateToken(r *http.Request) (*User, error) {
+	// get the authorization header
+	authorizationHeader := r.Header.Get("Authorization")
+	if authorizationHeader == "" {
+		return nil, errors.New("no authorization header received")
+	}
+
+	// get the plain text token from the header
+	headerParts := strings.Split(authorizationHeader, " ")
+	if len(headerParts) != 2 || headerParts[0] != "Bearer" {
+		return nil, errors.New("no valid authorization header received")
+	}
+
+	token := headerParts[1]
+
+	// make sure the token is of the correct length
+	if len(token) != 26 {
+		return nil, errors.New("token wrong size")
+	}
+
+	// get the token from the database, using the plain text token to find it
+	tkn, err := t.GetByToken(token)
+	if err != nil {
+		return nil, errors.New("no matching token found")
+	}
+
+	// make sure the token has not expired
+	if tkn.Expiry.Before(time.Now()) {
+		return nil, errors.New("expired token")
+	}
+
+	// get the user associated with the token
+	user, err := t.GetUserForToken(*tkn)
+	if err != nil {
+		return nil, errors.New("no matching user found")
+	}
+
+	return user, nil
 }
