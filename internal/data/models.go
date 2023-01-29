@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -183,6 +184,40 @@ func (u *User) Insert(user User) (int, error) {
 	return newID, nil
 }
 
+func (u *User) ResetPassword(password string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	if err != nil {
+		return err
+	}
+
+	stmt := `UPDATE users SET password = $1 WHERE id = $2`
+	_, err = db.ExecContext(ctx, stmt, hashedPassword, u.ID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (u *User) PasswordMatches(planText string) (bool, error) {
+	err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(planText))
+
+	if err != nil {
+		switch {
+		case errors.Is(err, bcrypt.ErrMismatchedHashAndPassword):
+			// invalid password
+			return false, nil
+		default:
+			return false, err
+		}
+	}
+
+	return true, nil
+}
+
 type Token struct {
 	ID        int       `json:"id"`
 	UserID    int       `json:"user_id"`
@@ -192,4 +227,53 @@ type Token struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdateAt  time.Time `json:"update_at"`
 	Expiry    time.Time `json:"expiry"`
+}
+
+func (t *Token) GetByToken(planText string) (*Token, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	query := `SELECT id, user_id, email, token, token_hash, created, updated, expiry FROM tokens WHERE token = $1`
+	var token Token
+	row := db.QueryRowContext(ctx, query, planText)
+	err := row.Scan(
+		&token.ID,
+		&token.UserID,
+		&token.Email,
+		&token.Token,
+		&token.TokenHash,
+		&token.CreatedAt,
+		&token.UpdateAt,
+		&token.Expiry,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &token, nil
+}
+
+func (u *User) GetUserForToken(token Token) (*User, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	query := `SELECT id, email, first_name, last_name, password, created_at, updated_at FROM users WHERE id = $1`
+
+	var user User
+	row := db.QueryRowContext(ctx, query, token.UserID)
+
+	err := row.Scan(
+		&user.ID,
+		&user.Email,
+		&user.FirstName,
+		&user.LastName,
+		&user.Password,
+		&user.CreatedAt,
+		&user.UpdateAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &user, nil
 }
