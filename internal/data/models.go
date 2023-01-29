@@ -2,11 +2,11 @@ package data
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base32"
 	"errors"
+	"math/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -18,6 +18,8 @@ const dbTimeout = time.Second * 3
 
 var db *sql.DB
 
+// New is the function used to create an instance of the data package. It returns the type
+// Model, which embeds all of the types we want to be available to our application.
 func New(dbPool *sql.DB) Models {
 	db = dbPool
 
@@ -27,11 +29,16 @@ func New(dbPool *sql.DB) Models {
 	}
 }
 
+// Models is the type for this package. Note that any model that is included as a member
+// in this type is available to us throughout the application, anywhere that the
+// app variable is used, provided that the model is also added in the New function.
 type Models struct {
 	User  User
 	Token Token
 }
 
+// User is the stucture which holds one user from the database. Note
+// that it embeds a token type.
 type User struct {
 	ID        int       `json:"id"`
 	Email     string    `json:"email"`
@@ -43,6 +50,7 @@ type User struct {
 	Token     Token     `json:"token"`
 }
 
+// GetAll returns a slice of all users, sorted by last name
 func (u *User) GetAll() ([]*User, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
@@ -77,6 +85,7 @@ func (u *User) GetAll() ([]*User, error) {
 	return users, nil
 }
 
+// GetByEmail returns one user by email
 func (u *User) GetByEmail(email string) (*User, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
@@ -100,6 +109,7 @@ func (u *User) GetByEmail(email string) (*User, error) {
 	return &user, nil
 }
 
+// GetOne returns one user by id
 func (u *User) GetOne(id int) (*User, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
@@ -123,6 +133,8 @@ func (u *User) GetOne(id int) (*User, error) {
 	return &user, nil
 }
 
+// Update updates one user in the database, using the information
+// stored in the receiver u
 func (u *User) Update() error {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
@@ -148,6 +160,7 @@ func (u *User) Update() error {
 	return nil
 }
 
+// Delete deletes one user from the datbase, by ID
 func (u *User) Delete() error {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
@@ -161,6 +174,7 @@ func (u *User) Delete() error {
 	return nil
 }
 
+// Insert inserts a new user into the datbase, and returns the ID of the newly inserted row
 func (u *User) Insert(user User) (int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
@@ -189,6 +203,7 @@ func (u *User) Insert(user User) (int, error) {
 	return newID, nil
 }
 
+// ResetPassword is the method we will use to change a user's password.
 func (u *User) ResetPassword(password string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
@@ -207,6 +222,9 @@ func (u *User) ResetPassword(password string) error {
 	return nil
 }
 
+// PasswordMatches uses Go's bcrypt package to compare a user supplied password
+// with the hash we have stored for a given user in the database. If the password
+// and hash match, we return true; otherwise, we return false.
 func (u *User) PasswordMatches(planText string) (bool, error) {
 	err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(planText))
 
@@ -223,6 +241,8 @@ func (u *User) PasswordMatches(planText string) (bool, error) {
 	return true, nil
 }
 
+// Token is the data structure for any token in the database. Note that
+// we do not send the TokenHash (a slice of bytes) in any exported JSON.
 type Token struct {
 	ID        int       `json:"id"`
 	UserID    int       `json:"user_id"`
@@ -234,6 +254,8 @@ type Token struct {
 	Expiry    time.Time `json:"expiry"`
 }
 
+// GetByToken takes a plain text token string, and looks up the full token from
+// the database. It returns a pointer to the Token model.
 func (t *Token) GetByToken(planText string) (*Token, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
@@ -399,4 +421,25 @@ func (t *Token) DeleteByToken(plainText string) error {
 	}
 
 	return nil
+}
+
+// ValidToken makes certain that a given token is valid; in order to be valid,
+// the token must exist in the database, the associated user must exist in the database,
+// and the token must not have expired.
+func (t *Token) ValidToken(plainText string) (bool, error) {
+	token, err := t.GetByToken(plainText)
+	if err != nil {
+		return false, errors.New("no matching token found")
+	}
+
+	_, err = t.GetUserForToken(*token)
+	if err != nil {
+		return false, errors.New("no matching user found")
+	}
+
+	if token.Expiry.Before(time.Now()) {
+		return false, errors.New("expired token")
+	}
+
+	return true, nil
 }
