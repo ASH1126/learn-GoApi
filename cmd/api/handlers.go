@@ -11,6 +11,8 @@ type jsonResponse struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
+type envelope map[string]interface{}
+
 // Login is the handler used to attempt to log a user into the api
 func (app *application) Login(w http.ResponseWriter, r *http.Request) {
 	type credentials struct {
