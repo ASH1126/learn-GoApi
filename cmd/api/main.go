@@ -18,10 +18,11 @@ type config struct {
 // various parts of our application. We will share this information in most
 // cases by using this type as the receiver for functions
 type application struct {
-	config   config
-	infoLog  *log.Logger
-	errorLog *log.Logger
-	models   data.Models
+	config      config
+	infoLog     *log.Logger
+	errorLog    *log.Logger
+	models      data.Models
+	environment string
 }
 
 // main is the main entry point for our application
@@ -33,16 +34,18 @@ func main() {
 	errorLog := log.New(os.Stdout, "ERROR\t", log.Ldate|log.Ltime|log.Lshortfile)
 
 	dsn := os.Getenv("DSN")
+	environment := os.Getenv("ENV")
 	db, err := driver.ConnectPostgres(dsn)
 	if err != nil {
 		log.Fatal("Cannot Connect to database")
 	}
 
 	app := &application{
-		config:   cfg,
-		infoLog:  infoLog,
-		errorLog: errorLog,
-		models:   data.New(db.SQL),
+		config:      cfg,
+		infoLog:     infoLog,
+		errorLog:    errorLog,
+		models:      data.New(db.SQL),
+		environment: environment,
 	}
 
 	err = app.serve()
