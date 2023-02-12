@@ -3,7 +3,11 @@ package main
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
+	"vue-api/internal/data"
+
+	"github.com/go-chi/chi/v5"
 )
 
 // jsonResponse is the type used for generic JSON responses
@@ -47,6 +51,12 @@ func (app *application) Login(w http.ResponseWriter, r *http.Request) {
 	validPassword, err := user.PasswordMatches(creds.Password)
 	if err != nil || !validPassword {
 		app.errorJSON(w, errors.New("invalid username/password"))
+		return
+	}
+
+	// make sure user is active
+	if user.Active == 0 {
+		app.errorJSON(w, errors.New("user is not active"))
 		return
 	}
 
@@ -97,6 +107,182 @@ func (app *application) Logout(w http.ResponseWriter, r *http.Request) {
 	payload := jsonResponse{
 		Error:   false,
 		Message: "logged out",
+	}
+
+	_ = app.writeJSON(w, http.StatusOK, payload)
+}
+
+func (app *application) AllUsers(w http.ResponseWriter, r *http.Request) {
+	var users data.User
+	all, err := users.GetAll()
+	if err != nil {
+		app.errorLog.Println(err)
+		return
+	}
+
+	payload := jsonResponse{
+		Error:   false,
+		Message: "success",
+		Data:    envelope{"users": all},
+	}
+
+	app.writeJSON(w, http.StatusOK, payload)
+}
+
+// EditUser saves a new user, or updates a user, in the database
+func (app *application) EditUser(w http.ResponseWriter, r *http.Request) {
+	var user data.User
+	err := app.readJSON(w, r, &user)
+	if err != nil {
+		app.errorJSON(w, err)
+		return
+	}
+
+	if user.ID == 0 {
+		// add user
+		if _, err := app.models.User.Insert(user); err != nil {
+			app.errorJSON(w, err)
+			return
+		}
+	} else {
+		// editing user
+		u, err := app.models.User.GetOne(user.ID)
+		if err != nil {
+			app.errorJSON(w, err)
+			return
+		}
+
+		u.Email = user.Email
+		u.FirstName = user.FirstName
+		u.LastName = user.LastName
+		u.Active = user.Active
+
+		if err := u.Update(); err != nil {
+			app.errorJSON(w, err)
+			return
+		}
+
+		// if password != string, update password
+		if user.Password != "" {
+			err := u.ResetPassword(user.Password)
+			if err != nil {
+				app.errorJSON(w, err)
+				return
+			}
+		}
+	}
+
+	payload := jsonResponse{
+		Error:   false,
+		Message: "Changes saved",
+	}
+
+	_ = app.writeJSON(w, http.StatusAccepted, payload)
+}
+
+// GetUser returns one user as JSON
+func (app *application) GetUser(w http.ResponseWriter, r *http.Request) {
+
+	// app.errorLog.Println(chi.URLParam(r, "id"))
+
+	userID, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		app.errorJSON(w, err)
+		return
+	}
+
+	user, err := app.models.User.GetOne(userID)
+	if err != nil {
+		app.errorJSON(w, err)
+		return
+	}
+
+	_ = app.writeJSON(w, http.StatusOK, user)
+}
+
+// DeleteUser delets a user from the users table by the id given in the supplied JSON file
+func (app *application) DeleteUser(w http.ResponseWriter, r *http.Request) {
+	var requestPayload struct {
+		ID int `json:"id"`
+	}
+
+	err := app.readJSON(w, r, &requestPayload)
+	if err != nil {
+		app.errorJSON(w, err)
+		return
+	}
+
+	err = app.models.User.DeleteByID(requestPayload.ID)
+	if err != nil {
+		app.errorJSON(w, err)
+		return
+	}
+
+	payload := jsonResponse{
+		Error:   false,
+		Message: "User deleted",
+	}
+
+	_ = app.writeJSON(w, http.StatusOK, payload)
+}
+
+// LogUserOutAndSetInactive sets the user specified by the id value in the supplied JSON
+// to inactive, and deletes any tokens associated with that user id from the tokens table
+// in the database
+func (app *application) LogUserOutAndSetInactive(w http.ResponseWriter, r *http.Request) {
+	userID, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		app.errorJSON(w, err)
+		return
+	}
+
+	user, err := app.models.User.GetOne(userID)
+	if err != nil {
+		app.errorJSON(w, err)
+		return
+	}
+
+	user.Active = 0
+	err = user.Update()
+	if err != nil {
+		app.errorJSON(w, err)
+		return
+	}
+
+	// delete tokens for user
+	err = app.models.Token.DeleteTokensForUser(userID)
+	if err != nil {
+		app.errorJSON(w, err)
+		return
+	}
+
+	payload := jsonResponse{
+		Error:   false,
+		Message: "user logged out and set to inactive",
+	}
+
+	_ = app.writeJSON(w, http.StatusAccepted, payload)
+}
+
+// ValidateToken accepts a JSON payload with a plain text token, and returns
+// true if that token is valid, or false if it is not, as a JSON response
+func (app *application) ValidateToken(w http.ResponseWriter, r *http.Request) {
+	var requestPayload struct {
+		Token string `json:"token"`
+	}
+
+	err := app.readJSON(w, r, &requestPayload)
+	if err != nil {
+		app.errorJSON(w, err)
+		return
+	}
+
+	valid := false
+	valid, _ = app.models.Token.ValidToken(requestPayload.Token)
+
+	payload := jsonResponse{
+		Error: false,
+		Data:  valid,
 	}
 
 	_ = app.writeJSON(w, http.StatusOK, payload)

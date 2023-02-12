@@ -8,6 +8,7 @@ require (
 )
 
 require (
+	github.com/go-chi/chi v1.5.4 // indirect
 	github.com/jackc/chunkreader/v2 v2.0.1 // indirect
 	github.com/jackc/pgconn v1.13.0 // indirect
 	github.com/jackc/pgio v1.0.0 // indirect
