@@ -27,6 +27,10 @@ func (app *application) routes() http.Handler {
 	mux.Post("/users/login", app.Login)
 	mux.Post("/users/logout", app.Logout)
 
+	mux.Post("/books", app.AllBooks)
+	mux.Get("/books", app.AllBooks)
+	mux.Get("/books/{slug}", app.OneBook)
+
 	mux.Post("/validate-token", app.ValidateToken)
 
 	// all of the routes in the block below are prefixed with /admin, and also
@@ -44,12 +48,23 @@ func (app *application) routes() http.Handler {
 		// 	app.writeJSON(w, http.StatusOK, payload)
 		// })
 
+		// admin user routes
 		mux.Post("/users", app.AllUsers)
 		mux.Post("/users/save", app.EditUser)
 		mux.Post("/users/get/{id}", app.GetUser)
 		mux.Post("/users/delete", app.DeleteUser)
 		mux.Post("/log-user-out/{id}", app.LogUserOutAndSetInactive)
+
+		// admin book routes
+		mux.Post("/authors/all", app.AuthorsAll)
+		mux.Post("/books/save", app.EditBook)
+		mux.Post("/books/delete", app.DeleteBook)
+		mux.Post("/books/{id}", app.BookByID)
 	})
+
+	// static files
+	fileServer := http.FileServer(http.Dir("./static/"))
+	mux.Handle("/static/*", http.StripPrefix("/static", fileServer))
 
 	// mux.Get("/users/add", func(w http.ResponseWriter, r *http.Request) {
 	// 	var u = data.User{
